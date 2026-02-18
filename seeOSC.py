@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (QWidget, QPushButton,
                              QLabel, QVBoxLayout,
                              QHBoxLayout, QMessageBox,
                              QMainWindow, QFileDialog,
-                             QLayout)
+                             QLayout, QLineEdit, QFrame)
 from PyQt5.QtGui import QFontDatabase, QFont
 
 import Aegis_osc
@@ -51,6 +51,10 @@ class MainMenu(QWidget):
         self.now_plot_osc_item = None
         self.main_layout_v = QVBoxLayout(self)
         self.main_layout_v.setSizeConstraint(QLayout.SetMinimumSize)
+        self.layout_num_osc_h = QHBoxLayout()
+        self.edit_osc_num = QLineEdit()
+        self.edit_osc_widget = QWidget()
+        self.bttn_goto_osc = QPushButton("Перейти")
 
         # Кнопка для получения открытия отдельной осциллограммы
         self.startWidget = QWidget(self)
@@ -124,7 +128,7 @@ class MainMenu(QWidget):
             if not hasattr(self, "now_plot_osc"):
                 self.logger.logg(LOG_LEVEL._INFO_, f"Создание графиков и их отображение",
                         os.path.basename(__file__),
-                        inspect.currentframe().f_lineno, 
+                        inspect.currentframe().f_lineno,
                         inspect.currentframe().f_code.co_name)
                 self.now_plot_osc = pg.PlotWidget(parent=self)
                 self.now_plot_spectr = pg.PlotWidget(parent=self)
@@ -142,10 +146,27 @@ class MainMenu(QWidget):
                 self.now_plot_spectr.setMaximumHeight(400)
 
                 self.main_layout_v.addWidget(self.file_open)
-                self.main_layout_v.addWidget(self.info_now_num_osc)
+
+                self.layout_num_osc_h.addWidget(self.info_now_num_osc)
+                self.layout_num_osc_h.addWidget(self.get_separator())
+                self.layout_num_osc_h.addWidget(QLabel("№ осциллограммы:"))
+                self.layout_num_osc_h.addWidget(self.edit_osc_num)
+                self.layout_num_osc_h.addWidget(self.bttn_goto_osc)
+                self.layout_num_osc_h.addStretch()
+                
+                self.main_layout_v.addLayout(self.layout_num_osc_h)
 
                 self.main_layout_v.addLayout(self.plot_layout_h)
 
+                # Поле ввода номера осциллограммы и кнопка перехода
+                self.edit_osc_num.setMaximumWidth(120)
+                self.edit_osc_num.returnPressed.connect(self._goto_osc_by_edit)
+                self.bttn_goto_osc.clicked.connect(self._goto_osc_by_edit)
+                self.edit_osc_widget.setLayout(self.layout_num_osc_h)
+                self.main_layout_v.addWidget(self.edit_osc_widget)
+
+            if hasattr(self, "edit_osc_num"):
+                self.edit_osc_num.setPlaceholderText(f"1 - {self.num_osc}")
             self.now_plot_osc.clear()
             self.now_plot_spectr.clear()
 
@@ -280,6 +301,48 @@ class MainMenu(QWidget):
             event.ignore()  # Позволяет обработать событие другим обработчикам
 
 
+    def _goto_osc_by_edit(self) -> None:
+        """Переход к осциллограмме по номеру из поля edit."""
+        text = self.edit_osc_num.text().strip()
+        if not text:
+            return
+        try:
+            num = int(text)
+        except ValueError:
+            QMessageBox.warning(self, "Ошибка", f"Введите число от 1 до {self.num_osc}")
+            return
+        if num < 1 or num > self.num_osc:
+            QMessageBox.warning(self, "Ошибка", f"Введите число от 1 до {self.num_osc}")
+            return
+        target_index = num - 1  # 0-based
+        if target_index == self.osc_now:
+            return
+        # Загружаем данные, если целевая осциллограмма вне текущего диапазона
+        if target_index < self.start_data_osc or target_index >= self.end_data_osc:
+            self.start_data_osc = (target_index // 500) * 500
+            self.end_data_osc = min(self.start_data_osc + 500, self.num_osc)
+            self.osc_datas = np.array(self.osc_file.getDotsOSC(self.start_data_osc, self.end_data_osc))
+            self.K_mkV = np.array(self.osc_file.get_K_mkV(self.start_data_osc, self.end_data_osc))
+            self.dB_data = np.array([get_dB_osc(self.osc_datas[i], self.K_mkV[i])
+                                    for i in range(self.end_data_osc - self.start_data_osc)])
+        self.osc_now = target_index
+        now_ind = self.osc_now - self.start_data_osc
+        self.now_plot_osc.clear()
+        self.now_plot_spectr.clear()
+        self.info_now_num_osc.setText(f"Номер кадра: {self.osc_now + 1} из {self.num_osc}")
+        self.now_plot_osc_item = self.now_plot_osc.plot(self.osc_datas[now_ind])
+        spectr = four2(np.array(self.osc_datas[now_ind], dtype=np.float64))
+        x = [i / (len(spectr) / 2 / 500) for i in range(round(len(spectr) / 2))]
+        self.now_plot_spectr_item = self.now_plot_spectr.plot(x, spectr[:round(len(spectr) / 2)])
+        index = np.argmax(spectr[:round(len(spectr) / 2)])
+        self.text = pg.TextItem(f"{x[index]} кГц", anchor=(0, 1), color="r")
+        self.now_plot_spectr.addItem(self.text)
+        self.dB_text = pg.TextItem(f"{self.dB_data[now_ind]} Дб", anchor=(0, 1), color="r")
+        self.now_plot_osc.addItem(self.dB_text)
+        self.__update_info_position()
+        self.check_next_prev_osc()
+        self.osc_now_changed.emit(self.osc_now)
+
     def check_next_prev_osc(self) -> None:
         if self.osc_now + 1 >= self.num_osc:
             self.bttn_next_osc.setEnabled(False)
@@ -360,6 +423,23 @@ class MainMenu(QWidget):
         # Отправляем сигнал о том, что номер осциллограммы изменился
         self.osc_now_changed.emit(self.osc_now)
     
+    def get_separator(self) -> QFrame:
+        separator = QFrame()
+        separator.setFrameShape(QFrame.VLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        # Стилизация через CSS
+        separator.setStyleSheet("""
+            QFrame {
+                background-color: gray;  /* Цвет линии */
+                margin: 5px 0px;  /* Отступы сверху и снизу */
+            }
+        """)
+        
+        # Фиксированная ширина (опционально)
+        separator.setFixedWidth(1)
+        
+        return separator
+
     def __set_style_for_app(self) -> None:
         """Устанавливает стиль для приложения."""
         self.setStyleSheet("""
