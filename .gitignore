@@ -1,0 +1,41 @@
+__pycache__/
+.vscode/
+cpp old/
+.vs/
+out/
+cpp/build/
+cpp/build old/
+cpp/build old 0/
+cpp/build old 1/
+cpp/build old 2/
+cpp/builder/
+.idea/
+build/
+dist/
+dist old/
+output/
+*.exe
+*.osc
+*.ald
+*.csv
+*.xlsx
+*.zip
+*.txt
+*.rar
+*.npy
+*.log
+*.keras
+*.h5
+*.jpg
+*.jpeg
+*.png
+*.docx
+*.lfg
+*.cfg
+*.pyd
+*.pdf
+!Aegis_osc.pyd
+!best_model.keras
+!requirements.txt
+!CMakeLists.txt
+review_Kinopoisk_lab5/
