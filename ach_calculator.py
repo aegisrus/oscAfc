@@ -6,6 +6,7 @@
 
 import json
 import os
+import sys
 from typing import Optional
 
 import numpy as np
@@ -31,7 +32,9 @@ def load_ach_config(config_path: Optional[str] = None) -> dict:
     """
     Загружает конфигурацию АЧХ из JSON-файла.
 
-    Ищет файл в порядке: config_path -> рядом с приложением -> %APPDATA%.
+    Ищет файл только рядом с исполняемым файлом:
+    - при запуске .exe — в каталоге exe;
+    - при запуске через Python — в каталоге главного скрипта (sys.argv[0]).
     При отсутствии файла возвращает значения по умолчанию.
 
     Returns:
@@ -40,17 +43,15 @@ def load_ach_config(config_path: Optional[str] = None) -> dict:
     """
     default = _default_config()
 
-    search_paths = []
     if config_path and os.path.isfile(config_path):
         search_paths = [config_path]
     else:
-        app_dir = os.path.dirname(os.path.abspath(__file__))
-        appdata = os.environ.get("APPDATA", "")
-        search_paths = [
-            os.path.join(app_dir, "ach_config.json"),
-            os.path.join(appdata, "oscAfc", "ach_config.json") if appdata else "",
-        ]
-        search_paths = [p for p in search_paths if p]
+        # Каталог исполняемого файла: exe при сборке, иначе — каталог main.py
+        if getattr(sys, "frozen", False):
+            exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        else:
+            exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        search_paths = [os.path.join(exe_dir, "ach_config.json")]
 
     for path in search_paths:
         if path and os.path.isfile(path):

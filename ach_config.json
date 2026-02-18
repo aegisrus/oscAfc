@@ -7,6 +7,6 @@
   "fft_size": 8192,
   "smooth_window": 50,
   "skip_bins": 300,
-  "freq_range": [0, 500],
+  "freq_range": [50, 500],
   "db_range": [0, 70]
 }

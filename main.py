@@ -26,6 +26,39 @@ from pyqtgraph.exporters import ImageExporter
 class MainMenuWithACH(seeOSC.MainMenu):
     """Расширение MainMenu функционалом расчёта и сохранения АЧХ."""
 
+    def __init__(self):
+        super().__init__()
+
+        self.isInitialization = True
+
+    def _refresh_ach_coords_label(self, cursor_x=None, cursor_y=None) -> None:
+        """Обновляет метку АЧХ: курсор X/Y и Xextr/Yextr. Вызывается при пересчёте и при движении мыши."""
+        if not hasattr(self, "coords_label_ach"):
+            return
+        if cursor_x is not None and cursor_y is not None:
+            cursor_part = f"X: {cursor_x:.3g}  Y: {cursor_y:.3g}"
+        else:
+            cursor_part = "X: —  Y: —"
+        if getattr(self, "ach_xextr", None) is not None:
+            extr_part = f"  |  Xextr: {self.ach_xextr:.3g}  Yextr: {self.ach_yextr:.3g}"
+        else:
+            extr_part = ""
+        self.coords_label_ach.setText(cursor_part + extr_part)
+
+    def _update_coords_label(self, evt, plot_widget, label) -> None:
+        """Переопределение: для графика АЧХ обновляем метку с курсором и экстремумом."""
+        if hasattr(self, "now_plot_ach") and plot_widget is self.now_plot_ach:
+            pos = evt[0] if isinstance(evt, (tuple, list)) and evt else evt
+            vb = plot_widget.plotItem.vb
+            if vb.sceneBoundingRect().contains(pos):
+                mouse_point = vb.mapSceneToView(pos)
+                self._refresh_ach_coords_label(mouse_point.x(), mouse_point.y())
+            else:
+                self._refresh_ach_coords_label(None, None)
+        else:
+            super()._update_coords_label(evt, plot_widget, label)
+    
+
     def _add_extra_buttons_after_nav(self) -> None:
         """Добавляет график АЧХ, кнопки и подключает авто-расчёт при смене осциллограммы."""
         self._ensure_ach_plot_exists()
@@ -46,6 +79,8 @@ class MainMenuWithACH(seeOSC.MainMenu):
         self.now_plot_ach.addLegend()
         self.now_plot_ach.setMinimumSize(QSize(400, 150))
         self.coords_label_ach = QLabel("X: —  Y: —")
+        self.ach_xextr = None
+        self.ach_yextr = None
         self.coords_label_ach.setStyleSheet("font-size: 11px; color: #666;")
         self.ach_container = QWidget()
         ach_vbox = QVBoxLayout(self.ach_container)
@@ -101,6 +136,8 @@ class MainMenuWithACH(seeOSC.MainMenu):
             (255, 0, 0, 180), (0, 128, 0, 180), (0, 0, 255, 180),
             (255, 165, 0, 180), (148, 0, 211, 180), (255, 192, 203, 180),
         ]
+        all_f_plot = []
+        all_a_plot = []
 
         for i, idx in enumerate(range(idx_from, idx_to + 1)):
             local_idx = idx - batch_start
@@ -114,9 +151,23 @@ class MainMenuWithACH(seeOSC.MainMenu):
             mask = (freq_arr >= freq_range[0]) & (freq_arr <= freq_range[1])
             f_plot = freq_arr[mask]
             a_plot = ach_db[mask]
+            all_f_plot.append(f_plot)
+            all_a_plot.append(a_plot)
             color = colors[i % len(colors)]
             curve_name = f"№ {idx + 1}"
             self.now_plot_ach.plot(f_plot, a_plot, pen=pg.mkColor(color), name=curve_name)
+
+        if all_f_plot and all_a_plot:
+            f_all = np.concatenate(all_f_plot)
+            a_all = np.concatenate(all_a_plot)
+            idx_max = np.argmax(a_all)
+            self.ach_xextr = float(f_all[idx_max])
+            self.ach_yextr = float(a_all[idx_max])
+        else:
+            self.ach_xextr = None
+            self.ach_yextr = None
+
+        self._refresh_ach_coords_label(cursor_x=None, cursor_y=None)
 
         self.now_plot_ach.setXRange(freq_range[0], freq_range[1])
         self.now_plot_ach.setYRange(db_range[0], db_range[1])
