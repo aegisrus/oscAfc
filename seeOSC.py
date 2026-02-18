@@ -16,7 +16,8 @@ from PyQt5.QtWidgets import (QWidget, QPushButton,
                              QLabel, QVBoxLayout,
                              QHBoxLayout, QMessageBox,
                              QMainWindow, QFileDialog,
-                             QLayout, QLineEdit, QFrame)
+                             QLayout, QLineEdit, QFrame,
+                             QSplitter)
 from PyQt5.QtGui import QFontDatabase, QFont
 
 import Aegis_osc
@@ -26,6 +27,7 @@ from work_with_osc import DataOsc, get_dB_osc
 
 
 LOG_LEVEL = Aegis_osc.LogLevel
+
 
 @njit
 def set_K_mkV_and_dB(end_data_osc: int, K_mkV: np.ndarray, osc_datas: np.ndarray) -> np.ndarray:
@@ -76,9 +78,9 @@ class MainMenu(QWidget):
         """Обработчик события клика для кнопки создания нового датасета"""
         path, _ = QFileDialog.getOpenFileName(self, "Выберите файл", "", "osc files (*.osc)")
 
-        self.__open_osc(path)
+        self._open_osc(path)
 
-    def __open_osc(self, name_osc: str):
+    def _open_osc(self, name_osc: str):
         try:
             self.startWidget.setMinimumSize(0, 0)  # Сбрасываем ограничения на размер виджета
 
@@ -123,7 +125,6 @@ class MainMenu(QWidget):
                         os.path.basename(__file__),
                         inspect.currentframe().f_lineno, 
                         inspect.currentframe().f_code.co_name)
-            self.plot_layout_h = QHBoxLayout(self)
             self.osc_now = 0
             if not hasattr(self, "now_plot_osc"):
                 self.logger.logg(LOG_LEVEL._INFO_, f"Создание графиков и их отображение",
@@ -138,12 +139,44 @@ class MainMenu(QWidget):
                 self.now_plot_osc.showGrid(x=True, y=True)
                 self.now_plot_spectr.showGrid(x=True, y=True)
 
-                self.plot_layout_h.addWidget(self.now_plot_osc)
-                self.plot_layout_h.addWidget(self.now_plot_spectr)
                 self.now_plot_osc.setMinimumSize(QSize(600, 250))
                 self.now_plot_osc.setMaximumHeight(400)
                 self.now_plot_spectr.setMinimumSize(QSize(600, 250))
                 self.now_plot_spectr.setMaximumHeight(400)
+
+                # Метки координат курсора для осциллограммы и спектра
+                self.coords_label_osc = QLabel("X: —  Y: —")
+                self.coords_label_spectr = QLabel("X: —  Y: —")
+                for lbl in (self.coords_label_osc, self.coords_label_spectr):
+                    lbl.setStyleSheet("font-size: 11px; color: #666;")
+                # Контейнеры: график + метка координат X/Y (осциллограмма и спектр)
+                self.plot_layout_h = QHBoxLayout()
+                for plot, lbl in [
+                    (self.now_plot_osc, self.coords_label_osc),
+                    (self.now_plot_spectr, self.coords_label_spectr),
+                ]:
+                    container = QWidget()
+                    vbox = QVBoxLayout(container)
+                    vbox.setContentsMargins(0, 0, 0, 0)
+                    vbox.addWidget(plot)
+                    vbox.addWidget(lbl)
+                    self.plot_layout_h.addWidget(container)
+
+                # Верхняя часть: осциллограмма и спектр (без растягивания)
+                self.top_plots_widget = QWidget()
+                self.top_plots_widget.setLayout(self.plot_layout_h)
+
+                self.plots_splitter = QSplitter(Qt.Vertical)
+                self.plots_splitter.addWidget(self.top_plots_widget)
+
+                self.now_plot_osc.scene().sigMouseMoved.connect(
+                    lambda pos, p=self.now_plot_osc, lbl=self.coords_label_osc:
+                    self._update_coords_label(pos, p, lbl)
+                )
+                self.now_plot_spectr.scene().sigMouseMoved.connect(
+                    lambda pos, p=self.now_plot_spectr, lbl=self.coords_label_spectr:
+                    self._update_coords_label(pos, p, lbl)
+                )
 
                 self.main_layout_v.addWidget(self.file_open)
 
@@ -156,7 +189,7 @@ class MainMenu(QWidget):
                 
                 self.main_layout_v.addLayout(self.layout_num_osc_h)
 
-                self.main_layout_v.addLayout(self.plot_layout_h)
+                self.main_layout_v.addWidget(self.plots_splitter)
 
                 # Поле ввода номера осциллограммы и кнопка перехода
                 self.edit_osc_num.setMaximumWidth(120)
@@ -210,6 +243,8 @@ class MainMenu(QWidget):
                 self.bttn_prev_osc.clicked.connect(self.open_prev_osc)
                 self.main_layout_v.addWidget(self.bttn_next_osc)
                 self.main_layout_v.addWidget(self.bttn_prev_osc)
+
+                self._add_extra_buttons_after_nav()
             self.check_next_prev_osc()
             # Отправляем сигнал о том, что графики были отображены
             self.adjustSize()
@@ -219,6 +254,16 @@ class MainMenu(QWidget):
                         os.path.basename(__file__),
                         inspect.currentframe().f_lineno, 
                         inspect.currentframe().f_code.co_name)
+
+    def _update_coords_label(self, evt, plot_widget, label: QLabel) -> None:
+        """Обновляет метку с координатами X/Y при движении курсора над графиком."""
+        pos = evt[0] if isinstance(evt, (tuple, list)) and evt else evt
+        vb = plot_widget.plotItem.vb
+        if vb.sceneBoundingRect().contains(pos):
+            mouse_point = vb.mapSceneToView(pos)
+            label.setText(f"X: {mouse_point.x():.3g}  Y: {mouse_point.y():.3g}")
+        else:
+            label.setText("X: —  Y: —")
 
     def __update_info_position(self) -> None:
         """Обновляет позицию текстового элемента в правом верхнем углу графика."""
@@ -422,7 +467,11 @@ class MainMenu(QWidget):
 
         # Отправляем сигнал о том, что номер осциллограммы изменился
         self.osc_now_changed.emit(self.osc_now)
-    
+
+    def _add_extra_buttons_after_nav(self) -> None:
+        """Переопределите в подклассе для добавления кнопок после навигации."""
+        pass
+
     def get_separator(self) -> QFrame:
         separator = QFrame()
         separator.setFrameShape(QFrame.VLine)
